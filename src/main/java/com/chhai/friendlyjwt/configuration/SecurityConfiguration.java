@@ -8,19 +8,22 @@ import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.annotation.web.configurers.oauth2.server.resource.OAuth2ResourceServerConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 
 
@@ -32,56 +35,64 @@ import java.security.interfaces.RSAPublicKey;
 @Configuration
 @EnableWebSecurity
 public class SecurityConfiguration {
+
     // user credential
-    @Bean
-    public InMemoryUserDetailsManager userDetailsManager(){
-
-        UserDetails user = User.builder()
-                .username("chhai")
-                .password("{noop}12345")
-                .authorities("read", "write")
-                .build();
-
-        return new InMemoryUserDetailsManager(user);
+    private final UserDetailsService userDetailsService;
+    SecurityConfiguration(UserDetailsService userDetailsService){
+        this.userDetailsService = userDetailsService;
     }
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception{
+    public AuthenticationProvider authenticationProvider(){
+        DaoAuthenticationProvider daoAuthenticationProvider = new DaoAuthenticationProvider();
 
-        return http.csrf(AbstractHttpConfigurer::disable)
-                .authorizeHttpRequests(request-> request.anyRequest().authenticated())
-                .oauth2ResourceServer(OAuth2ResourceServerConfigurer::jwt)
+
+        daoAuthenticationProvider.setPasswordEncoder(passwordEncoder());
+        return daoAuthenticationProvider;
+    }
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception{
+        http.csrf(AbstractHttpConfigurer::disable)
+                .authorizeHttpRequests(request -> request.requestMatchers("/home", "/login").permitAll().anyRequest().authenticated())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .httpBasic(Customizer.withDefaults())
-                .build();
+                .oauth2ResourceServer(OAuth2ResourceServerConfigurer::jwt);
+                return http.build();
     }
     // 1. keypair
     // 2. RSAKey
     @Bean
     public KeyPair keyPair(){
         try {
-            var keyGenerator = KeyPairGenerator.getInstance("RSA");
-            keyGenerator.initialize(2048);
-            return keyGenerator.generateKeyPair();
-
+            var keyPairGenerator = KeyPairGenerator.getInstance("rsa");
+            keyPairGenerator.initialize(2048);
+            return keyPairGenerator.generateKeyPair();
         }catch (NoSuchAlgorithmException ex){
-            throw new RuntimeException(ex.getMessage());
+            throw new RuntimeException();
         }
     }
 
-
     // 3. enCoder
     @Bean
-    public JwtEncoder jwtEncoder(){
-        // create instant of jwk
+    public JwtEncoder jwtEncoder (){
         JWK jwk = new RSAKey.Builder((RSAPublicKey) keyPair().getPublic()).privateKey(keyPair().getPrivate()).build();
-        // provide that instance to the JWKSource
+
         JWKSource<SecurityContext> jwkSource = new ImmutableJWKSet<>(new JWKSet(jwk));
         return new NimbusJwtEncoder(jwkSource);
     }
+
     // 4. deCoder
     @Bean
     public JwtDecoder jwtDecoder(){
-        return  NimbusJwtDecoder.withPublicKey((RSAPublicKey) keyPair().getPublic()).build();
+        return NimbusJwtDecoder.withPublicKey((RSAPublicKey) keyPair().getPublic()).build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder(){
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception{
+        return authenticationConfiguration.getAuthenticationManager();
     }
 }
